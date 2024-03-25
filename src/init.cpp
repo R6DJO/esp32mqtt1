@@ -8,22 +8,21 @@
 // This is a personal academic project. Dear PVS-Studio, please check it.
 // PVS-Studio Static Code Analyzer for C, C++, C#, and Java: https://pvs-studio.com
 
+#include <Arduino.h>
 #include "init.h"
+#include "wificonf.h"
 
-const char *ssid = "fresh";
-const char *password = "ZAQ12wsx";
-
-void initFS()
-{
-    if (!SPIFFS.begin())
-    {
-        Serial.println("HMI: An error has occurred while mounting SPIFFS");
-    }
-    else
-    {
-        Serial.println("HMI: SPIFFS mounted successfully");
-    }
-}
+// void initFS()
+// {
+//     if (!SPIFFS.begin())
+//     {
+//         Serial.println("HMI: An error has occurred while mounting SPIFFS");
+//     }
+//     else
+//     {
+//         Serial.println("HMI: SPIFFS mounted successfully");
+//     }
+// }
 
 void WiFiStationConnected(WiFiEvent_t event, WiFiEventInfo_t info)
 {
@@ -43,20 +42,13 @@ void WiFiStationDisconnected(WiFiEvent_t event, WiFiEventInfo_t info)
     Serial.print("WiFi lost connection. Reason: ");
     Serial.println(info.wifi_sta_disconnected.reason);
     Serial.println("Trying to Reconnect");
-    WiFi.begin(ssid, password);
+    WiFi.begin(SSID, PASSWORD);
 }
 
 void initWiFi()
 {
-    WiFi.disconnect(true);
-    delay(1000);
     WiFi.onEvent(WiFiStationConnected, WiFiEvent_t::ARDUINO_EVENT_WIFI_STA_CONNECTED);
     WiFi.onEvent(WiFiGotIP, WiFiEvent_t::ARDUINO_EVENT_WIFI_STA_GOT_IP);
     WiFi.onEvent(WiFiStationDisconnected, WiFiEvent_t::ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
-    WiFi.begin(ssid, password);
-
-    Serial.println();
-    Serial.println();
-    Serial.println("Wait for WiFi... ");
-    delay(1000);
+    WiFi.begin(SSID, PASSWORD);
 }

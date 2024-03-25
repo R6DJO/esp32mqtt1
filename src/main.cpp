@@ -1,23 +1,26 @@
 #include <Arduino.h>
-#include "init.h"
+
 #include <WiFiClientSecure.h>
-
 #include <PubSubClient.h>
-#include <GyverBME280.h> // Подключение библиотеки
+#include <GyverBME280.h>
+#include "init.h"
 
-#include "secret.h"
+#define LED 2
 
 // Define MQTT topics for publishing sensor data
+#define mqtt_prefix "gb_iot/3216_FAV/"
+#define hello "gb_iot/3216_FAV/init"
 #define pres_p "gb_iot/3216_FAV/pres"
 #define pres_h "gb_iot/3216_FAV/pres_hg"
-#define temp   "gb_iot/3216_FAV/temp"
+#define temp "gb_iot/3216_FAV/temp"
+#define led_mode_blink "gb_iot/3216_FAV/ledblink"
 
 // Initialize the BME280 sensor
 GyverBME280 bme;
 
 // Function prototypes
-void mqtt_loop();
-int mqtt_sub_reconnect();
+void mqtt_sub_loop();
+boolean mqtt_sub_reconnect();
 void handle_msg(char *topic, unsigned char *payload, unsigned int length);
 
 // Initialize MQTT clients and WiFi
@@ -30,38 +33,39 @@ PubSubClient mqtt_client_sub;
 const char *host = "mqtt.iotserv.ru";
 const int port = 8883;
 
+int led_mode = 0;
+
 void setup()
 {
+    pinMode(LED, OUTPUT);
     // Initialize serial communication
     Serial.begin(115200);
 
     // Connect to WiFi network
     initWiFi();
-    // WiFi.begin(W_ssid, W_pwd);
-
-    // // Wait for WiFi connection
-    // while (WiFi.status() != wl_status_t::WL_CONNECTED)
-    // {
-    //     Serial.print(".");
-    //     delay(1000);
-    // }
-    // Serial.println("\nConnected");
 
     // Initialize BME280 sensor
     bme.begin();
 
+    while (!WiFi.isConnected())
+    {
+        Serial.print(".");
+        delay(333);
+    }
+    Serial.println();
+
     // Set CA certificate, client certificate, and private key for the publisher client
-    net_client_pub.setCACert(rootCA);
-    net_client_pub.setCertificate(pub_cert);
-    net_client_pub.setPrivateKey(pub_key);
+    net_client_pub.setCACert(ROOT_CA);
+    net_client_pub.setCertificate(PUB_CERT);
+    net_client_pub.setPrivateKey(PUB_KEY);
 
     // Initialize the publisher MQTT client
     mqtt_client_pub.setClient(net_client_pub);
     mqtt_client_pub.setServer(host, port);
-    mqtt_client_pub.connect("test_1148_kad");
+    mqtt_client_pub.connect("3216_FAV_pub");
 
     // Set CA certificate, client certificate, and private key for the subscriber client
-    net_client_sub.setCACert(rootCA);
+    net_client_sub.setCACert(ROOT_CA);
     net_client_sub.setCertificate(sub_cert);
     net_client_sub.setPrivateKey(sub_key);
 
@@ -70,96 +74,121 @@ void setup()
     mqtt_client_sub.setServer(host, port);
     mqtt_client_sub.setCallback(handle_msg);
 
-    Serial.print("MQTT connect status: ");
-    Serial.println(mqtt_client_pub.connected());
+    Serial.printf("MQTT Pub connect status: %s\n", mqtt_client_pub.connected() ? "Connected" : "Disconnected");
+    // Publish an initialization message to the MQTT topic
+    mqtt_client_pub.publish(hello, "Hello!");
 
     // Attempt to connect to the MQTT broker for the subscriber
     mqtt_sub_reconnect();
-
-    // Publish an initialization message to the MQTT topic
-    mqtt_client_pub.publish("gb_iot/3216_FAV/init", "Hello!");
 }
 
 void publish_bme_data()
 {
-    // Read the temperature from the BME280 sensor and convert it to a String
+    // Initialize a boolean variable to track the success of the publishing process
     boolean status = false;
+
+    // Read the temperature from the BME sensor and convert it to a string
     String TempVal = String(bme.readTemperature());
 
-    // Print the temperature value in degrees Celsius
+    // Print the temperature value to the Serial monitor
     Serial.print("Temperature: ");
     Serial.print(TempVal);
     Serial.println(" *C");
 
-    // Convert the temperature value to a character array with one decimal place
+    // Create a character array to store the formatted temperature value
     char t[20];
+
+    // Format the temperature value with zero decimal places and store it in the character array
     sprintf(t, "%0.0f", bme.readTemperature());
 
-    // Publish the temperature value to the MQTT topic 'temp'
-    status |= ~(mqtt_client_pub.publish(temp, t, strlen(t)));
+    // Publish the temperature value to the specified MQTT topic
+    status |= !mqtt_client_pub.publish(temp, t);
 
-    // Read the pressure from the BME280 sensor in Pascal
+    // Read the pressure from the BME sensor
     float pressure = bme.readPressure();
 
-    // Print the pressure value in hectopascals
+    // Print the pressure value to the Serial monitor
     Serial.print("Pressure: ");
-    Serial.print(pressure / 100.0F); // Convert from Pascal to hectopascals
-    Serial.print(" hPa , ");
-
-    // Print the pressure value in millimeters of mercury
+    Serial.print(pressure / 100.0F);
+    Serial.print(" hPa, ");
     Serial.print(pressureToMmHg(pressure));
     Serial.println(" mm Hg");
 
-    // Convert the pressure value in Pascal to a character array with one decimal place
+    // Format the pressure value with zero decimal places and store it in the character array
     char p[20];
     sprintf(p, "%0.0f", pressure);
 
-    // Publish the pressure value in Pascal to the MQTT topic 'pres_p'
-    status |= ~(mqtt_client_pub.publish(pres_p, p, strlen(p)));
+    // Publish the pressure value in hPa to the specified MQTT topic
+    status |= !mqtt_client_pub.publish(pres_p, p);
 
-    // Convert the pressure value in millimeters of mercury to a character array with one decimal place
+    // Format the pressure value with one decimal place and store it in the character array
     sprintf(p, "%0.1f", pressureToMmHg(pressure));
 
-    // Publish the pressure value in millimeters of mercury to the MQTT topic 'pres_h'
-    status |= ~(mqtt_client_pub.publish(pres_h, p, strlen(p)));
-    Serial.print("Pub: status ");
-    Serial.println(status);
+    // Publish the pressure value in mmHg to the specified MQTT topic
+    status |= !mqtt_client_pub.publish(pres_h, p);
+
+    // Print the status of the publishing process to the Serial monitor
+    Serial.printf("MQTT Pub send topic's status: %s\n", !status ? "OK" : "Problem");
 }
 
-// Publish the current value to the MQTT topic
-const uint32_t TRANSMISSION_INTERVAL_MS = 6000;
-
-void publish_bme_values()
+void mqtt_pub_loop()
 {
+    boolean status = mqtt_client_pub.connected();
+    const uint32_t TRANSMISSION_INTERVAL_MS = 6000;
     static uint32_t last_transmission_time = 0;
     uint32_t current_time = millis();
 
     if (current_time - last_transmission_time > TRANSMISSION_INTERVAL_MS)
     {
-        if (!mqtt_client_pub.connected())
+        if (!status)
         {
-            mqtt_client_pub.connect("test_1148_kad");
-            Serial.print("MQTT connect status: ");
-            Serial.println(mqtt_client_pub.connected());
+            status = mqtt_client_pub.connect("3216_FAV_pub");
+            Serial.printf("MQTT Pub connect status: %s\n", status ? "Connected" : "Disconnected");
         }
-        else
+        if (status)
         {
             publish_bme_data();
+            last_transmission_time = current_time;
         }
-        last_transmission_time = current_time;
+    }
+}
+
+void led_update()
+{
+    static unsigned long previousMillis = 0;
+    const long interval = 500;
+    unsigned long currentMillis = millis();
+
+    if (currentMillis - previousMillis >= interval)
+    {
+        previousMillis = currentMillis;
+        switch (led_mode)
+        {
+        case 0:
+            digitalWrite(LED, LOW);
+            break;
+        case 1:
+            digitalWrite(LED, !digitalRead(LED));
+            break;
+        default:
+
+            break;
+        }
     }
 }
 
 // The void loop function is where the main code runs repeatedly in a loop.
 void loop()
 {
-    // Put your main code here, to run repeatedly:
+    if (WiFi.isConnected())
+    {
+        // mqtt_pub_loop() is a function that is used to publish a value.
+        mqtt_pub_loop();
 
-    // publish_value() is a function that is used to publish a value.
-    publish_bme_values();
-
-    // mqtt_loop() is a function that handles the MQTT loop.
-    mqtt_loop();
+        // mqtt_sub_loop() is a function that handles the MQTT loop.
+        mqtt_sub_loop();
+    }
+    led_update();
 }
 
 // Subscription message handling function
@@ -169,62 +198,40 @@ void handle_msg(char *topic, unsigned char *payload, unsigned int length)
     payload[length] = '\0';
 
     // Print received message details in format: sub: <topic>: <payload>
-    Serial.printf("Sub: %s: %s\n", (char *)topic, (char *)payload);
+    // Serial.printf("MQTT Sub rcvd: %s: %s\n", (char *)topic, (char *)payload);
 
     // TODO: Parse received message
     // Add code here to parse and process the received message according to the project requirements
+    if (strcmp(topic, led_mode_blink) == 0)
+    {
+        led_mode = atoi((const char *)payload);
+        Serial.printf("MQTT Sub rcvd: %s: %s\n", (char *)topic, (char *)payload);
+    }
 }
 
-// Function for handling MQTT loop operations
-void mqtt_loop()
+void mqtt_sub_loop()
 {
-    // Initialize a static variable to store the last reconnect attempt time
     static uint32_t last_reconnect_attempt = 0;
-
-    // Check if the MQTT client is not connected
-    if (!mqtt_client_sub.connected())
+    uint32_t now = millis();
+    if (!mqtt_client_sub.connected() && now - last_reconnect_attempt > 15000)
     {
-        // Get the current time in milliseconds
-        uint32_t now = millis();
-
-        // Check if the difference between the current time and the last reconnect attempt time is greater than 5000 milliseconds
-        if (now - last_reconnect_attempt > 5000)
-        {
-            // Update the last reconnect attempt time
-            last_reconnect_attempt = now;
-
-            // Attempt to reconnect the MQTT client
-            if (mqtt_sub_reconnect())
-            {
-                // If the reconnection is successful, reset the last reconnect attempt time
-                last_reconnect_attempt = 0;
-            }
-        }
+        last_reconnect_attempt = now;
+        mqtt_sub_reconnect();
     }
-    else
-    {
-        // If the MQTT client is connected, process incoming messages and maintain the connection
-        mqtt_client_sub.loop();
-        ;
-    }
+    mqtt_client_sub.loop();
 }
 
-// Function name: mqtt_sub_reconnect
-// Description: This function is used to reconnect the MQTT subscriber.
-// It first attempts to connect to the MQTT broker with the client ID "test_adk_sub".
-// If the connection is successful, it prints "Sub connected" to the serial monitor.
-// Then, it subscribes to the topic "gb_iot/#", which means it will receive messages from all topics under "gb_iot/".
-// Returns: A boolean value indicating whether the MQTT client is currently connected.
-int mqtt_sub_reconnect()
+boolean mqtt_sub_reconnect()
 {
-    // Attempt to connect to the MQTT broker with the client ID "test_adk_sub"
-    if (mqtt_client_sub.connect("test_adk_sub"))
+    boolean status = mqtt_client_sub.connect("3216_FAV_sub");
+    if (status)
     {
-        // If the connection is successful, print "Sub connected" to the serial monitor
-        Serial.println("Sub: connected");
-        // Subscribe to the topic "gb_iot/#"
-        mqtt_client_sub.subscribe("gb_iot/#");
+        Serial.println("MQTT Sub connect status: Connected");
+        status = mqtt_client_sub.subscribe("gb_iot/#");
     }
-    // Return whether the MQTT client is currently connected
+    if (status)
+    {
+        Serial.println("MQTT Sub connect status: Subscribed");
+    }
     return mqtt_client_sub.connected();
 }

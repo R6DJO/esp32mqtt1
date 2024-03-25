@@ -1,0 +1,14 @@
+/*
+ * wificonf.h
+ *
+ *  Created on: Mar 5, 2024
+ *      Author: r6djo
+ */
+
+#ifndef INC_WIFICONF_H_
+#define INC_WIFICONF_H_
+
+const char *SSID = "SSID";
+const char *PASSWORD = "PASS";
+
+#endif /* INC_WIFICONF_H_ */
